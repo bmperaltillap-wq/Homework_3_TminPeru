@@ -13,15 +13,6 @@ venv.bak/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Data files (comentar si quieres subir datos pequeños)
-*.tif
-*.tiff
-*.shp
-*.dbf
-*.shx
-*.prj
-*.cpg
-
 # IDE
 .vscode/
 .idea/
