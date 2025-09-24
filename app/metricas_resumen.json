@@ -1,0 +1,10 @@
+{
+  "total_distritos": 1873,
+  "distritos_alto_riesgo": 188,
+  "temp_media_nacional": 9.735145809359295,
+  "temp_minima_extrema": -5.211087036132812,
+  "temp_maxima_extrema": 23.26909697220622,
+  "umbral_alto_riesgo": 1.4744625282287607,
+  "distrito_mas_frio": "CAPAZO, PUNO",
+  "distrito_mas_calido": "MORONA, LORETO"
+}
