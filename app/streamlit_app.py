@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,6 +9,7 @@ from plotly.subplots import make_subplots
 import json
 from pathlib import Path
 import warnings
+import os
 warnings.filterwarnings('ignore')
 
 # Configuración de página
@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS personalizado para mejorar la apariencia
+# CSS personalizado
 st.markdown("""
 <style>
     .main-header {
@@ -70,13 +70,60 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    """Carga datos con manejo robusto de errores y validación"""
+    """Carga datos con manejo robusto de rutas para local y cloud"""
     try:
-        stats = pd.read_csv('estadisticas_temperatura_distritos.csv')
-        with open('metricas_resumen.json', 'r') as f:
-            metricas = json.load(f)
+        # Posibles ubicaciones de archivos
+        csv_paths = [
+            'estadisticas_temperatura_distritos.csv',  # Ejecución local desde app/
+            'app/estadisticas_temperatura_distritos.csv',  # Ejecución cloud desde raíz
+            './estadisticas_temperatura_distritos.csv',
+            './app/estadisticas_temperatura_distritos.csv'
+        ]
         
-        # Validación de datos
+        json_paths = [
+            'metricas_resumen.json',
+            'app/metricas_resumen.json',
+            './metricas_resumen.json', 
+            './app/metricas_resumen.json'
+        ]
+        
+        # Buscar y cargar CSV
+        stats = None
+        csv_found = None
+        for path in csv_paths:
+            if os.path.exists(path):
+                try:
+                    stats = pd.read_csv(path)
+                    csv_found = path
+                    break
+                except Exception as e:
+                    continue
+        
+        if stats is None:
+            # Debug: mostrar archivos disponibles
+            st.error("CSV no encontrado. Archivos disponibles:")
+            st.write("Directorio actual:", os.listdir('.'))
+            if os.path.exists('app'):
+                st.write("Carpeta app:", os.listdir('app'))
+            raise FileNotFoundError("Archivo CSV no encontrado en ninguna ubicación")
+        
+        # Buscar y cargar JSON
+        metricas = None
+        json_found = None
+        for path in json_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        metricas = json.load(f)
+                    json_found = path
+                    break
+                except Exception as e:
+                    continue
+        
+        if metricas is None:
+            raise FileNotFoundError("Archivo JSON no encontrado")
+        
+        # Validaciones
         if stats.empty:
             st.error("El archivo de estadísticas está vacío")
             return None, None
@@ -88,31 +135,29 @@ def load_data():
             return None, None
             
         return stats, metricas
-    except FileNotFoundError as e:
-        st.error(f"Archivo no encontrado: {e}")
-        return None, None
+        
     except Exception as e:
-        st.error(f"Error inesperado cargando datos: {e}")
+        st.error(f"Error cargando datos: {e}")
         return None, None
 
 def create_advanced_distribution_plot(datos):
     """Crea visualizaciones avanzadas de distribución"""
     fig = make_subplots(
         rows=2, cols=2,
-        subplot_titles=('Distribución de Temperatura Media', 'Box Plot por Regiones', 
-                       'Densidad por Departamentos Top', 'Correlación Temp vs Variabilidad'),
+        subplot_titles=('Distribución de Temperatura Media', 'Box Plot por Departamentos', 
+                       'Densidad por Regiones', 'Correlación Temp vs Variabilidad'),
         specs=[[{"secondary_y": False}, {"secondary_y": False}],
                [{"secondary_y": False}, {"secondary_y": False}]]
     )
     
-    # Histograma con curva de densidad
+    # Histograma
     fig.add_trace(
         go.Histogram(x=datos['mean'], nbinsx=40, name='Distribución', 
                     marker_color='lightblue', opacity=0.7),
         row=1, col=1
     )
     
-    # Box plot por regiones (aproximación por departamentos)
+    # Box plot por departamentos top
     top_depts = datos.groupby('DEPARTAMEN')['mean'].count().nlargest(8).index
     dept_data = datos[datos['DEPARTAMEN'].isin(top_depts)]
     
@@ -123,89 +168,25 @@ def create_advanced_distribution_plot(datos):
             row=1, col=2
         )
     
-    # Curvas de densidad para departamentos principales
-    colors = px.colors.qualitative.Set3
-    for i, dept in enumerate(top_depts[:5]):
-        dept_temps = datos[datos['DEPARTAMEN'] == dept]['mean']
-        if len(dept_temps) > 5:  # Solo si hay suficientes datos
-            fig.add_trace(
-                go.Histogram(x=dept_temps, histnorm='probability density', 
-                           name=dept, opacity=0.6, 
-                           marker_color=colors[i % len(colors)]),
-                row=2, col=1
-            )
-    
     # Scatter plot temperatura vs variabilidad
     fig.add_trace(
         go.Scatter(x=datos['mean'], y=datos['std'], mode='markers',
                   marker=dict(size=5, opacity=0.6, color=datos['mean'], 
-                            colorscale='RdYlBu_r', showscale=True,
-                            colorbar=dict(title="Temp (°C)", x=1.02)),
+                            colorscale='RdYlBu_r', showscale=True),
                   name='Distritos', showlegend=False),
         row=2, col=2
     )
     
-    fig.update_layout(height=800, showlegend=True, 
+    fig.update_layout(height=800, showlegend=False, 
                      title_text="Análisis Estadístico Avanzado de Temperatura")
     
     return fig
 
-def create_ranking_visualization(datos):
-    """Crea visualización avanzada de rankings"""
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Top 15 Distritos Más Fríos', 'Top 15 Distritos Más Cálidos',
-                       'Distribución por Departamento', 'Análisis de Riesgo por Región'),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": False}, {"secondary_y": False}]]
-    )
-    
-    # Top 15 más fríos
-    frios = datos.nsmallest(15, 'mean')
-    fig.add_trace(
-        go.Bar(x=frios['mean'], y=[f"{row['DISTRITO'][:15]}..." for _, row in frios.iterrows()],
-               orientation='h', name='Más Fríos', marker_color='lightblue',
-               text=[f"{temp:.1f}°C" for temp in frios['mean']], textposition='outside'),
-        row=1, col=1
-    )
-    
-    # Top 15 más cálidos
-    calidos = datos.nlargest(15, 'mean')
-    fig.add_trace(
-        go.Bar(x=calidos['mean'], y=[f"{row['DISTRITO'][:15]}..." for _, row in calidos.iterrows()],
-               orientation='h', name='Más Cálidos', marker_color='lightcoral',
-               text=[f"{temp:.1f}°C" for temp in calidos['mean']], textposition='outside'),
-        row=1, col=2
-    )
-    
-    # Distribución por departamento
-    dept_stats = datos.groupby('DEPARTAMEN')['mean'].agg(['count', 'mean']).sort_values('mean')
-    fig.add_trace(
-        go.Bar(x=dept_stats.index, y=dept_stats['count'], name='Cantidad Distritos',
-               marker_color='lightgreen'),
-        row=2, col=1
-    )
-    
-    # Análisis de riesgo
-    umbral_riesgo = datos['mean'].quantile(0.1)
-    riesgo_por_dept = datos[datos['mean'] <= umbral_riesgo].groupby('DEPARTAMEN').size().sort_values(ascending=False)
-    
-    fig.add_trace(
-        go.Bar(x=riesgo_por_dept.index[:10], y=riesgo_por_dept.values[:10], 
-               name='Distritos Alto Riesgo', marker_color='red'),
-        row=2, col=2
-    )
-    
-    fig.update_layout(height=900, showlegend=False,
-                     title_text="Análisis de Rankings y Distribución Territorial")
-    
-    return fig
-
 def show_executive_summary(metricas, datos):
-    """Resumen ejecutivo mejorado con análisis detallado"""
+    """Resumen ejecutivo mejorado"""
     st.markdown('<div class="main-header">Resumen Ejecutivo - Análisis de Temperatura Mínima</div>', unsafe_allow_html=True)
     
-    # Métricas principales con diseño mejorado
+    # Métricas principales
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -223,7 +204,7 @@ def show_executive_summary(metricas, datos):
             label="Distritos en Alto Riesgo", 
             value=f"{metricas['distritos_alto_riesgo']:,}",
             delta=f"{(metricas['distritos_alto_riesgo']/metricas['total_distritos']*100):.1f}%",
-            help="Distritos con temperatura ≤ percentil 10 (mayor vulnerabilidad al friaje)"
+            help="Distritos con temperatura ≤ percentil 10"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -232,8 +213,7 @@ def show_executive_summary(metricas, datos):
         st.metric(
             label="Temperatura Media Nacional", 
             value=f"{metricas['temp_media_nacional']:.1f}°C",
-            delta=f"Rango: {metricas['temp_minima_extrema']:.1f}°C - {metricas['temp_maxima_extrema']:.1f}°C",
-            help="Promedio ponderado de temperatura media distrital"
+            help="Promedio de temperatura media distrital"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -243,41 +223,9 @@ def show_executive_summary(metricas, datos):
         st.metric(
             label="Variabilidad Térmica", 
             value=f"{variabilidad_promedio:.1f}°C",
-            help="Desviación estándar promedio - indica heterogeneidad climática"
+            help="Desviación estándar promedio"
         )
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Análisis contextual detallado
-    st.markdown('<div class="section-header">Contexto Geográfico y Climático</div>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("""
-        <div class="info-box">
-        <h4>Interpretación de Resultados</h4>
-        <p><strong>Distribución Espacial:</strong> El análisis revela una marcada heterogeneidad térmica 
-        que refleja la compleja geografía peruana. Las temperaturas mínimas están fuertemente correlacionadas 
-        con la altitud, evidenciando el gradiente térmico altitudinal característico de los Andes tropicales.</p>
-        
-        <p><strong>Patrón Latitudinal:</strong> Se observa una distribución que sigue patrones geográficos 
-        esperados: temperaturas más bajas en zonas alto-andinas del sur (Puno, Cusco, Arequipa) y 
-        temperaturas más elevadas en regiones amazónicas del norte y oriente.</p>
-        
-        <p><strong>Implicaciones Socioeconómicas:</strong> Los {distritos_riesgo:,} distritos identificados en alto riesgo 
-        concentran poblaciones rurales vulnerables, principalmente comunidades campesinas y ganaderas 
-        que dependen de actividades sensibles al clima.</p>
-        </div>
-        """.format(distritos_riesgo=metricas['distritos_alto_riesgo']), unsafe_allow_html=True)
-    
-    with col2:
-        # Gráfico de distribución rápida
-        fig_mini = px.histogram(datos, x='mean', nbins=30, 
-                               title='Distribución de Temperatura Media')
-        fig_mini.add_vline(x=metricas['umbral_alto_riesgo'], line_dash="dash", 
-                          line_color="red", annotation_text="Umbral Alto Riesgo")
-        fig_mini.update_layout(height=300, showlegend=False)
-        st.plotly_chart(fig_mini, use_container_width=True)
     
     # Hallazgos clave
     st.markdown('<div class="section-header">Hallazgos Principales</div>', unsafe_allow_html=True)
@@ -289,8 +237,7 @@ def show_executive_summary(metricas, datos):
         <div class="warning-box">
         <h4>Zona Crítica Identificada</h4>
         <p><strong>Distrito más frío:</strong><br>{metricas['distrito_mas_frio']}</p>
-        <p><strong>Temperatura media:</strong> {metricas['temp_minima_extrema']:.2f}°C</p>
-        <p>Esta zona requiere intervención prioritaria para mitigar impactos del friaje.</p>
+        <p><strong>Temperatura:</strong> {metricas['temp_minima_extrema']:.2f}°C</p>
         </div>
         """, unsafe_allow_html=True)
     
@@ -303,205 +250,200 @@ def show_executive_summary(metricas, datos):
         <h4>Departamento Más Vulnerable</h4>
         <p><strong>Departamento:</strong> {dept_mas_afectado}</p>
         <p><strong>Distritos en riesgo:</strong> {distritos_afectados}</p>
-        <p>Concentra el mayor número de distritos que requieren atención específica.</p>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown(f"""
+        st.markdown("""
         <div class="success-box">
         <h4>Cobertura del Análisis</h4>
         <p><strong>Metodología:</strong> Estadísticas zonales</p>
-        <p><strong>Precisión:</strong> Resolución ~1km</p>
-        <p><strong>Validez:</strong> Datos 2024 actualizados</p>
-        <p>Análisis geoespacial robusto con cobertura nacional completa.</p>
+        <p><strong>Precisión:</strong> ~1km</p>
+        <p><strong>Estándar:</strong> EPSG:4326 + UTM</p>
         </div>
         """, unsafe_allow_html=True)
 
 def show_zonal_statistics(datos):
-    """Sección de estadísticas zonales con análisis técnico detallado"""
+    """Estadísticas zonales con análisis técnico"""
     st.markdown('<div class="main-header">Estadísticas Zonales - Análisis Técnico</div>', unsafe_allow_html=True)
     
     st.markdown("""
     ### Metodología de Análisis Geoespacial
     
-    El análisis de estadísticas zonales constituye la técnica fundamental para extraer información cuantitativa 
-    de datos raster (temperatura) utilizando geometrías vectoriales (límites distritales). Esta metodología 
-    permite transformar datos continuos espaciales en métricas discretas por unidad administrativa.
+    El análisis utiliza técnicas de estadísticas zonales para extraer información cuantitativa 
+    del raster de temperatura usando límites administrativos distritales.
     """)
     
-    # Explicación técnica detallada
-    col1, col2 = st.columns([2, 1])
+    # Filtros interactivos
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("""
-        #### Proceso Técnico Implementado
-        
-        **1. Preparación de Datos:**
-        - Raster de temperatura mínima (GeoTIFF multibanda, EPSG:4326)
-        - Shapefile de límites distritales (1,873 unidades administrativas)
-        - Verificación de compatibilidad de sistemas de coordenadas
-        
-        **2. Cálculo de Estadísticas Zonales:**
-        - Superposición espacial entre geometrías y píxeles del raster
-        - Extracción de valores de temperatura para cada distrito
-        - Cálculo de métricas estadísticas usando biblioteca `rasterstats`
-        
-        **3. Métricas Calculadas:**
-        """)
-        
-        # Tabla de métricas con explicaciones
-        metricas_df = pd.DataFrame({
-            'Métrica': ['count', 'mean', 'min', 'max', 'std', 'percentile_10', 'percentile_90', 'range'],
-            'Descripción': [
-                'Número de píxeles válidos dentro de cada distrito',
-                'Temperatura media ponderada por área distrital',
-                'Valor mínimo de temperatura registrado en el distrito',
-                'Valor máximo de temperatura registrado en el distrito',
-                'Desviación estándar - medida de variabilidad térmica interna',
-                'Percentil 10 - umbral de temperaturas extremas bajas',
-                'Percentil 90 - umbral de temperaturas extremas altas',
-                'Amplitud térmica (max - min) - métrica personalizada'
-            ],
-            'Unidad': ['píxeles', '°C', '°C', '°C', '°C', '°C', '°C', '°C'],
-            'Aplicación': [
-                'Validación de cobertura espacial',
-                'Caracterización climática principal',
-                'Identificación de microclimas fríos',
-                'Detección de heterogeneidad térmica',
-                'Análisis de variabilidad espacial',
-                'Definición de zonas de alto riesgo',
-                'Identificación de valores atípicos',
-                'Evaluación de gradientes térmicos'
-            ]
-        })
-        
-        st.dataframe(metricas_df, use_container_width=True, hide_index=True)
+        departamentos = ['Todos'] + sorted(datos['DEPARTAMEN'].unique().tolist())
+        dept_seleccionado = st.selectbox("Departamento:", departamentos)
     
     with col2:
-        # Estadísticas de calidad de datos
-        st.markdown("#### Validación de Calidad")
-        
-        total_distritos = len(datos)
-        distritos_datos_validos = len(datos.dropna(subset=['mean']))
-        cobertura = (distritos_datos_validos / total_distritos) * 100
-        
-        st.metric("Cobertura Espacial", f"{cobertura:.1f}%", 
-                 help="Porcentaje de distritos con datos válidos")
-        
-        pixeles_promedio = datos['count'].mean()
-        st.metric("Píxeles/Distrito", f"{pixeles_promedio:.0f}", 
-                 help="Resolución espacial promedio por unidad administrativa")
-        
-        # Distribución de píxeles
-        fig_pixeles = px.histogram(datos, x='count', nbins=30, 
-                                  title='Distribución de Cobertura de Píxeles')
-        fig_pixeles.update_layout(height=250)
-        st.plotly_chart(fig_pixeles, use_container_width=True)
+        temp_min, temp_max = st.slider("Rango Temperatura (°C):", 
+                                      float(datos['mean'].min()), float(datos['mean'].max()), 
+                                      (float(datos['mean'].min()), float(datos['mean'].max())))
+    
+    with col3:
+        orden_columnas = ['mean', 'min', 'max', 'std']
+        columna_orden = st.selectbox("Ordenar por:", orden_columnas)
+    
+    # Aplicar filtros
+    datos_filtrados = datos.copy()
+    
+    if dept_seleccionado != 'Todos':
+        datos_filtrados = datos_filtrados[datos_filtrados['DEPARTAMEN'] == dept_seleccionado]
+    
+    datos_filtrados = datos_filtrados[
+        (datos_filtrados['mean'] >= temp_min) & 
+        (datos_filtrados['mean'] <= temp_max)
+    ]
+    
+    datos_filtrados = datos_filtrados.sort_values(columna_orden, ascending=False)
+    
+    # Mostrar resultados
+    st.markdown(f"**Resultados:** {len(datos_filtrados):,} distritos encontrados")
+    
+    columnas_mostrar = ['DEPARTAMEN', 'PROVINCIA', 'DISTRITO', 'mean', 'min', 'max', 'std']
+    datos_display = datos_filtrados[columnas_mostrar].round(2)
+    
+    st.dataframe(datos_display, use_container_width=True, height=400)
 
 def show_advanced_visualizations(datos):
-    """Visualizaciones avanzadas con análisis profundo"""
+    """Visualizaciones avanzadas"""
     st.markdown('<div class="main-header">Análisis Visual Avanzado</div>', unsafe_allow_html=True)
     
-    # Gráfico avanzado de distribución
+    # Gráfico de distribución avanzado
     fig_dist = create_advanced_distribution_plot(datos)
     st.plotly_chart(fig_dist, use_container_width=True)
     
-    # Visualización avanzada de rankings
-    fig_rank = create_ranking_visualization(datos)
-    st.plotly_chart(fig_rank, use_container_width=True)
+    # Rankings
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Distritos Más Fríos")
+        frios = datos.nsmallest(15, 'mean')[['DISTRITO', 'DEPARTAMEN', 'mean']].round(2)
+        st.dataframe(frios, hide_index=True)
+    
+    with col2:
+        st.subheader("Distritos Más Cálidos") 
+        calidos = datos.nlargest(15, 'mean')[['DISTRITO', 'DEPARTAMEN', 'mean']].round(2)
+        st.dataframe(calidos, hide_index=True)
 
 def show_static_map():
-    """Sección del mapa estático con contexto profesional"""
-    st.markdown('<div class="main-header">Cartografía Temática - Temperatura Mínima</div>', unsafe_allow_html=True)
+    """Mapa estático con rutas flexibles"""
+    st.markdown('<div class="main-header">Cartografía Temática</div>', unsafe_allow_html=True)
     
-    try:
-        st.image("mapa_temperatura_distritos.png", 
-                caption="Distribución espacial de temperatura mínima por distrito - Análisis geoespacial 2024",
+    # Buscar imagen del mapa
+    map_paths = [
+        'mapa_temperatura_distritos.png',
+        'app/mapa_temperatura_distritos.png',
+        './mapa_temperatura_distritos.png',
+        './app/mapa_temperatura_distritos.png'
+    ]
+    
+    map_found = None
+    for path in map_paths:
+        if os.path.exists(path):
+            map_found = path
+            break
+    
+    if map_found:
+        st.image(map_found, 
+                caption="Mapa de temperatura mínima por distrito - Perú",
                 use_column_width=True)
-    except:
-        st.error("Mapa estático no disponible. Verificar archivo 'mapa_temperatura_distritos.png'")
+    else:
+        st.error("Mapa estático no disponible")
+        st.info("El mapa se genera durante el procesamiento en el notebook")
 
 def show_data_download(datos):
-    """Sección de descarga de datos con opciones avanzadas"""
-    st.markdown('<div class="main-header">Centro de Descarga de Datos</div>', unsafe_allow_html=True)
+    """Descarga de datos"""
+    st.markdown('<div class="main-header">Centro de Descarga</div>', unsafe_allow_html=True)
+    
+    st.markdown("### Datasets Disponibles")
     
     # Dataset completo
     csv_completo = datos.to_csv(index=False)
     st.download_button(
-        label="Descargar Dataset Completo - Estadísticas Zonales",
+        label="📊 Descargar Dataset Completo (CSV)",
         data=csv_completo,
         file_name="temperatura_minima_peru_completo.csv",
         mime="text/csv",
-        help="Incluye todas las métricas calculadas para 1,873 distritos"
+        help="Todas las métricas calculadas para 1,873 distritos"
+    )
+    
+    # Dataset de alto riesgo
+    umbral_riesgo = datos['mean'].quantile(0.1)
+    alto_riesgo = datos[datos['mean'] <= umbral_riesgo]
+    csv_riesgo = alto_riesgo.to_csv(index=False)
+    
+    st.download_button(
+        label="🚨 Distritos Alto Riesgo (CSV)",
+        data=csv_riesgo,
+        file_name="distritos_alto_riesgo_friaje.csv",
+        mime="text/csv",
+        help=f"Distritos con temperatura ≤ {umbral_riesgo:.1f}°C"
     )
 
 def show_public_policies():
-    """Sección de políticas públicas con análisis técnico-económico detallado"""
-    st.markdown('<div class="main-header">Marco de Políticas Públicas Basadas en Evidencia</div>', unsafe_allow_html=True)
+    """Políticas públicas detalladas"""
+    st.markdown('<div class="main-header">Marco de Políticas Públicas</div>', unsafe_allow_html=True)
     
-    # Crear pestañas para cada propuesta
+    # Crear pestañas
     tab1, tab2, tab3 = st.tabs([
-        "Propuesta 1: Viviendas Térmicas", 
-        "Propuesta 2: Protección Agrícola",
-        "Propuesta 3: Protección Ganadera"
+        "🏠 Viviendas Térmicas", 
+        "🌾 Protección Agrícola",
+        "🦙 Protección Ganadera"
     ])
     
     with tab1:
-        st.markdown("#### Programa Nacional de Mejoramiento Térmico de Viviendas Rurales")
-        
-        col1, col2 = st.columns([3, 2])
-        
-        with col1:
-            st.markdown("""
-            **Objetivo Específico:**
-            Reducir la incidencia de infecciones respiratorias agudas (IRA) en niños menores de 5 años en un 30% 
-            mediante el mejoramiento integral de las condiciones térmicas habitacionales.
-            
-            **Población Objetivo:**
-            - Familias residentes en los 188 distritos con Tmin ≤ 1.5°C
-            - Hogares en condición de pobreza y pobreza extrema
-            - Presencia de niños menores de 5 años y adultos mayores
-            - Estimación poblacional: 80,000 familias (360,000 beneficiarios)
-            
-            **Componentes de Intervención:**
-            1. **Aislamiento Térmico Integral:** Paneles aislantes, mejoramiento de cobertura
-            2. **Sistema de Calefacción Eficiente:** Cocinas mejoradas, sistemas de ventilación
-            3. **Capacitación:** Educación en uso eficiente de combustibles
-            """)
-        
-        with col2:
-            st.markdown("""
-            **Análisis Costo-Beneficio:**
-            - Materiales: S/ 8,500
-            - Mano de obra: S/ 4,200
-            - Capacitación: S/ 800
-            - Supervisión: S/ 1,500
-            - **Total por vivienda: S/ 15,000**
-            
-            **Inversión Total:** S/ 1,200,000,000
-            
-            **Indicadores (KPI):**
-            - Reducción 30% casos IRA en menores de 5 años
-            - Mejora temperatura interna promedio: +7°C
-            - 95% satisfacción beneficiarios
-            """)
-    
-    with tab2:
-        st.markdown("#### Programa Nacional de Protección Agrícola Anti-Helada")
+        st.markdown("#### Programa de Mejoramiento Térmico de Viviendas")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("""
-            **Objetivo Específico:**
-            Reducir las pérdidas económicas por heladas agrícolas en 25% mediante tecnologías 
-            de protección pasiva y activa.
+            **Objetivo:**
+            Reducir infecciones respiratorias agudas (IRA) en niños menores de 5 años en 30%
             
             **Población Objetivo:**
-            - 40,000 productores agrícolas en distritos prioritarios
-            - Predios de 0.5 a 10 hectáreas
-            - Cultivos de papa, quinua, habas, maíz amiláceo
+            - 80,000 familias en distritos con Tmin ≤ 1.5°C
+            - 360,000 beneficiarios directos
+            
+            **Componentes:**
+            - Aislamiento térmico integral (ISUR)
+            - Cocinas mejoradas con distribución de calor
+            - Capacitación en uso eficiente de combustibles
+            """)
+        
+        with col2:
+            st.markdown("""
+            **Inversión:**
+            - Costo por vivienda: S/ 15,000
+            - Inversión total: S/ 1,200,000,000
+            
+            **Indicadores (KPI):**
+            - Reducción 30% casos IRA registrados
+            - Mejora temperatura interna +7°C
+            - 95% satisfacción beneficiarios
+            - ROI: 2.8:1 en 10 años
+            """)
+    
+    with tab2:
+        st.markdown("#### Programa de Protección Agrícola Anti-Helada")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **Objetivo:**
+            Reducir pérdidas agrícolas por heladas en 25%
+            
+            **Beneficiarios:**
+            - 40,000 productores en zonas de riesgo
+            - 200,000 hectáreas protegidas
             
             **Tecnologías:**
             - Mantas térmicas agrícolas
@@ -512,36 +454,33 @@ def show_public_policies():
         with col2:
             st.markdown("""
             **Inversión:**
-            - Costo por kit (10 ha): S/ 500
+            - Costo por kit: S/ 500
             - Inversión total: S/ 10,000,000
-            - Beneficio-Costo: 4.5:1
             
             **Impactos:**
             - Incremento rendimiento: 25%
             - Reducción pérdidas: 25%
-            - Mejora calidad: 15%
+            - Beneficio-Costo: 4.5:1
             """)
     
     with tab3:
-        st.markdown("#### Programa Nacional de Protección de Camélidos Sudamericanos")
+        st.markdown("#### Programa de Protección de Camélidos")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("""
-            **Objetivo Específico:**
-            Reducir la mortalidad de camélidos por eventos de friaje en 40% mediante 
-            refugios térmicos y manejo ganadero adaptativo.
+            **Objetivo:**
+            Reducir mortalidad de camélidos por friaje en 40%
             
-            **Población Objetivo:**
-            - 25,000 familias ganaderas en altitudes > 3,800 msnm
-            - Hatos de 20-200 camélidos
+            **Beneficiarios:**
+            - 25,000 familias ganaderas
             - 1,250,000 animales protegidos
             
-            **Componentes:**
-            - Cobertizos térmicos (50 animales)
+            **Infraestructura:**
+            - Refugios térmicos (50 animales)
             - Suplementación nutricional
-            - Capacitación en manejo sanitario
+            - Capacitación en manejo
             """)
         
         with col2:
@@ -549,7 +488,6 @@ def show_public_policies():
             **Inversión:**
             - Costo por refugio: S/ 8,000
             - Inversión total: S/ 200,000,000
-            - Periodo recuperación: 2.5 años
             
             **Impactos:**
             - Reducción mortalidad: 40%
@@ -558,53 +496,49 @@ def show_public_policies():
             """)
 
 def main():
-    """Función principal de la aplicación"""
+    """Función principal"""
     
     st.markdown('<div class="main-header">Sistema de Análisis Geoespacial - Temperatura Mínima Perú</div>', unsafe_allow_html=True)
     
-    # Cargar datos con validación
+    # Cargar datos
     datos, metricas = load_data()
     
     if datos is None:
         st.error("Error crítico: No se pudieron cargar los datasets requeridos")
         return
     
-    # Sidebar con navegación avanzada
-    st.sidebar.markdown('<div style="text-align: center; padding: 1rem;"><h2>Centro de Control</h2></div>', unsafe_allow_html=True)
+    # Sidebar
+    st.sidebar.markdown('<div style="text-align: center;"><h2>🧭 Centro de Control</h2></div>', unsafe_allow_html=True)
     
     opciones_menu = [
-        "Resumen Ejecutivo",
-        "Estadísticas Zonales", 
-        "Análisis Visual Avanzado",
-        "Cartografía Temática",
-        "Centro de Descarga",
-        "Marco de Políticas Públicas"
+        "📊 Resumen Ejecutivo",
+        "📈 Estadísticas Zonales", 
+        "📉 Análisis Visual Avanzado",
+        "🗺️ Cartografía Temática",
+        "💾 Centro de Descarga",
+        "🏛️ Marco de Políticas Públicas"
     ]
     
-    seleccion = st.sidebar.selectbox("Seleccionar módulo de análisis:", opciones_menu)
+    seleccion = st.sidebar.selectbox("Seleccionar módulo:", opciones_menu)
     
-    # Filtros globales
-    departamentos = ['Todos'] + sorted(datos['DEPARTAMEN'].unique().tolist())
-    dept_filtro = st.sidebar.selectbox("Filtro Departamental:", departamentos)
+    # Información del sistema
+    st.sidebar.markdown("### 📊 Métricas del Sistema")
+    st.sidebar.metric("Distritos Analizados", f"{len(datos):,}")
+    st.sidebar.metric("Cobertura Nacional", "100%")
+    st.sidebar.metric("Resolución Espacial", "~1 km")
     
-    # Aplicar filtros
-    if dept_filtro != "Todos":
-        datos_filtrados = datos[datos['DEPARTAMEN'] == dept_filtro]
-    else:
-        datos_filtrados = datos
-    
-    # Enrutamiento a módulos
-    if seleccion == "Resumen Ejecutivo":
-        show_executive_summary(metricas, datos_filtrados)
-    elif seleccion == "Estadísticas Zonales":
-        show_zonal_statistics(datos_filtrados)
-    elif seleccion == "Análisis Visual Avanzado":
-        show_advanced_visualizations(datos_filtrados)
-    elif seleccion == "Cartografía Temática":
+    # Enrutamiento
+    if seleccion == "📊 Resumen Ejecutivo":
+        show_executive_summary(metricas, datos)
+    elif seleccion == "📈 Estadísticas Zonales":
+        show_zonal_statistics(datos)
+    elif seleccion == "📉 Análisis Visual Avanzado":
+        show_advanced_visualizations(datos)
+    elif seleccion == "🗺️ Cartografía Temática":
         show_static_map()
-    elif seleccion == "Centro de Descarga":
-        show_data_download(datos_filtrados)
-    elif seleccion == "Marco de Políticas Públicas":
+    elif seleccion == "💾 Centro de Descarga":
+        show_data_download(datos)
+    elif seleccion == "🏛️ Marco de Políticas Públicas":
         show_public_policies()
 
 if __name__ == "__main__":
