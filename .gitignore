@@ -1,25 +1,32 @@
+# Entornos virtuales
+.venv/
+env/
+ENV/
+
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+*.pyc
+*.pyo
+*.pyd
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Jupyter
+.ipynb_checkpoints/
+# *.ipynb
 
-# IDE
-.vscode/
-.idea/
-
-# OS
+# Archivos de sistema
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/
+# Datos (no versionar archivos pesados)
+# data/
+!data/.gitkeep
+
+# Salidas
+# outputs/**/*.geojson
+# outputs/**/*.html
+# outputs/**/*.png
+# outputs/**/*.csv
+
+# Configuración local de IDE
+.vscode/
+.idea/
