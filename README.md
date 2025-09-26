@@ -169,7 +169,7 @@ streamlit run app/streamlit_app.py
 ```
 
 ### Acceso Online
-- **Aplicación desplegada:** [Streamlit Community Cloud](https://homework3-temperatura-peru.streamlit.app)
+- **Aplicación desplegada:** [Streamlit Community Cloud](https://tminperu.streamlit.app/)
 - **Repositorio:** [GitHub](https://github.com/bmperaltillap-wq/Homework_3_TminPeru)
 
 ## 📋 Dependencias Principales
